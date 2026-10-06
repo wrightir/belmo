@@ -1,20 +1,50 @@
 const express = require("express");
 const fs = require("fs");
-const { execFileSync } = require("child_process");
-
-// IMPORTANT:
-// Use Playwright's hermetic browser installation location:
-// /app/node_modules/playwright-core/.local-browsers
-process.env.PLAYWRIGHT_BROWSERS_PATH = "0";
-
-const { chromium } = require("playwright");
 
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-// Let Playwright determine the actual installed Chromium path.
-// This avoids hard-coding chromium-1243.
-const chromePath = chromium.executablePath();
+// Playwright hermetic browser installation.
+process.env.PLAYWRIGHT_BROWSERS_PATH = "0";
+
+// Writable runtime locations for Chromium.
+process.env.XDG_CONFIG_HOME = "/tmp/.chromium-config";
+process.env.XDG_CACHE_HOME = "/tmp/.chromium-cache";
+process.env.BREAKPAD_DUMP_LOCATION = "/tmp/.chromium-crashpad";
+
+// Make sure the runtime directories exist.
+fs.mkdirSync(process.env.XDG_CONFIG_HOME, {
+  recursive: true
+});
+
+fs.mkdirSync(process.env.XDG_CACHE_HOME, {
+  recursive: true
+});
+
+fs.mkdirSync(process.env.BREAKPAD_DUMP_LOCATION, {
+  recursive: true
+});
+
+const { chromium } = require("playwright");
+
+const playwrightChromePath = chromium.executablePath();
+
+// Playwright also installs Chrome Headless Shell.
+// Derive its path from the installed Chromium version.
+let headlessShellPath = null;
+
+const chromiumMatch = playwrightChromePath.match(
+  /chromium-(\d+)\/chrome-linux64\/chrome$/
+);
+
+if (chromiumMatch) {
+  const chromiumVersion = chromiumMatch[1];
+
+  headlessShellPath =
+    "/app/node_modules/playwright-core/.local-browsers/" +
+    `chromium_headless_shell-${chromiumVersion}/` +
+    "chrome-headless-shell-linux64/chrome-headless-shell";
+}
 
 console.log("========================================");
 console.log("=== Chromium runtime diagnostic ===");
@@ -22,52 +52,80 @@ console.log("========================================");
 
 console.log("HOME =", process.env.HOME);
 console.log("PORT =", PORT);
+
 console.log(
   "PLAYWRIGHT_BROWSERS_PATH =",
   process.env.PLAYWRIGHT_BROWSERS_PATH
 );
 
-console.log("");
-console.log("Playwright executablePath:");
-console.log(chromium.executablePath());
-
-console.log("");
-console.log("Actual Chrome path:");
-console.log(chromePath);
-
-console.log("");
-console.log("Filesystem checks:");
-
 console.log(
-  "Chrome executable exists:",
-  fs.existsSync(chromePath)
+  "XDG_CONFIG_HOME =",
+  process.env.XDG_CONFIG_HOME
 );
 
-if (fs.existsSync(chromePath)) {
-  try {
-    const stat = fs.statSync(chromePath);
+console.log(
+  "XDG_CACHE_HOME =",
+  process.env.XDG_CACHE_HOME
+);
 
-    console.log("Chrome file size:", stat.size);
+console.log(
+  "BREAKPAD_DUMP_LOCATION =",
+  process.env.BREAKPAD_DUMP_LOCATION
+);
+
+console.log("");
+console.log("Playwright Chromium path:");
+console.log(playwrightChromePath);
+
+console.log(
+  "Playwright Chromium exists:",
+  fs.existsSync(playwrightChromePath)
+);
+
+console.log("");
+console.log("Chrome Headless Shell path:");
+console.log(headlessShellPath);
+
+console.log(
+  "Chrome Headless Shell exists:",
+  headlessShellPath
+    ? fs.existsSync(headlessShellPath)
+    : false
+);
+
+if (
+  headlessShellPath &&
+  fs.existsSync(headlessShellPath)
+) {
+  try {
+    const stat = fs.statSync(headlessShellPath);
 
     console.log(
-      "Chrome executable mode:",
+      "Headless Shell file size:",
+      stat.size
+    );
+
+    console.log(
+      "Headless Shell executable mode:",
       "0" + (stat.mode & 0o777).toString(8)
     );
   } catch (error) {
-    console.error("Failed to stat Chrome:");
+    console.error("Failed to stat Headless Shell:");
     console.error(error);
   }
 
   console.log("");
-  console.log("Direct Chrome execution test:");
+  console.log("Direct Headless Shell execution test:");
 
   try {
-    const output = execFileSync(
-      chromePath,
+    const output = require("child_process").execFileSync(
+      headlessShellPath,
       [
         "--headless",
         "--no-sandbox",
         "--disable-gpu",
+        "--disable-dev-shm-usage",
+        "--crash-dumps-dir=/tmp/.chromium-crashpad",
         "--dump-dom",
         "https://example.com"
       ],
@@ -78,8 +136,14 @@ if (fs.existsSync(chromePath)) {
       }
     );
 
-    console.log("Direct Chrome execution: SUCCESS");
-    console.log("Output length:", output.length);
+    console.log(
+      "Direct Headless Shell execution: SUCCESS"
+    );
+
+    console.log(
+      "Output length:",
+      output.length
+    );
 
     console.log(
       "Output preview:",
@@ -87,10 +151,24 @@ if (fs.existsSync(chromePath)) {
     );
 
   } catch (error) {
-    console.error("Direct Chrome execution: FAILED");
-    console.error("Error message:", error.message);
-    console.error("Error code:", error.code);
-    console.error("Signal:", error.signal);
+    console.error(
+      "Direct Headless Shell execution: FAILED"
+    );
+
+    console.error(
+      "Error message:",
+      error.message
+    );
+
+    console.error(
+      "Error code:",
+      error.code
+    );
+
+    console.error(
+      "Signal:",
+      error.signal
+    );
 
     if (error.stdout) {
       console.error(
@@ -102,7 +180,7 @@ if (fs.existsSync(chromePath)) {
     if (error.stderr) {
       console.error(
         "stderr:",
-        error.stderr.toString().substring(0, 2000)
+        error.stderr.toString().substring(0, 3000)
       );
     }
   }
@@ -122,28 +200,42 @@ app.get("/", async (req, res) => {
     console.log("Starting Playwright Chromium...");
     console.log("========================================");
 
-    console.log("Using explicit executablePath:");
-    console.log(chromePath);
+    // Prefer Chrome Headless Shell in the container.
+    // It is explicitly installed by Playwright for headless use.
+    const executablePath =
+      headlessShellPath &&
+      fs.existsSync(headlessShellPath)
+        ? headlessShellPath
+        : playwrightChromePath;
+
+    console.log("Using executablePath:");
+    console.log(executablePath);
 
     console.log(
       "Executable exists:",
-      fs.existsSync(chromePath)
+      fs.existsSync(executablePath)
     );
 
     browser = await chromium.launch({
       headless: true,
-      executablePath: chromePath,
+      executablePath,
       args: [
         "--no-sandbox",
-        "--disable-gpu"
+        "--disable-gpu",
+        "--disable-dev-shm-usage",
+        "--crash-dumps-dir=/tmp/.chromium-crashpad"
       ]
     });
 
-    console.log("Chromium started successfully.");
+    console.log(
+      "Chromium started successfully."
+    );
 
     const page = await browser.newPage();
 
-    console.log("Opening test page...");
+    console.log(
+      "Opening test page..."
+    );
 
     await page.goto("https://example.com", {
       waitUntil: "domcontentloaded",
@@ -153,16 +245,29 @@ app.get("/", async (req, res) => {
     const title = await page.title();
     const url = page.url();
 
-    console.log("Page loaded successfully.");
-    console.log("Title:", title);
-    console.log("URL:", url);
+    console.log(
+      "Page loaded successfully."
+    );
+
+    console.log(
+      "Title:",
+      title
+    );
+
+    console.log(
+      "URL:",
+      url
+    );
 
     res.json({
       success: true,
       message: "Chromium is working!",
       title,
       url,
-      executablePath: chromePath
+      executablePath,
+      playwrightExecutablePath:
+        playwrightChromePath,
+      headlessShellPath
     });
 
   } catch (error) {
@@ -171,18 +276,52 @@ app.get("/", async (req, res) => {
     console.error("Chromium test failed");
     console.error("========================================");
 
-    console.error("Error name:", error.name);
-    console.error("Error message:", error.message);
-    console.error("Error stack:", error.stack);
+    console.error(
+      "Error name:",
+      error.name
+    );
+
+    console.error(
+      "Error message:",
+      error.message
+    );
+
+    console.error(
+      "Error stack:",
+      error.stack
+    );
 
     res.status(500).json({
       success: false,
       message: "Chromium test failed",
       error: error.message,
       stack: error.stack,
-      executablePath: chromePath,
+      playwrightExecutablePath:
+        playwrightChromePath,
+      headlessShellPath,
       filesystem: {
-        executableExists: fs.existsSync(chromePath)
+        playwrightExecutableExists:
+          fs.existsSync(playwrightChromePath),
+
+        headlessShellExists:
+          headlessShellPath
+            ? fs.existsSync(headlessShellPath)
+            : false,
+
+        configDirectoryExists:
+          fs.existsSync(
+            process.env.XDG_CONFIG_HOME
+          ),
+
+        cacheDirectoryExists:
+          fs.existsSync(
+            process.env.XDG_CACHE_HOME
+          ),
+
+        crashpadDirectoryExists:
+          fs.existsSync(
+            process.env.BREAKPAD_DUMP_LOCATION
+          )
       }
     });
 
@@ -190,7 +329,11 @@ app.get("/", async (req, res) => {
     if (browser) {
       try {
         await browser.close();
-        console.log("Chromium closed.");
+
+        console.log(
+          "Chromium closed."
+        );
+
       } catch (error) {
         console.error(
           "Failed to close Chromium:",
@@ -210,9 +353,15 @@ app.get("/health", (req, res) => {
 });
 
 
-app.listen(PORT, "0.0.0.0", () => {
-  console.log("");
-  console.log("========================================");
-  console.log(`Server listening on port ${PORT}`);
-  console.log("========================================");
-});
+app.listen(
+  PORT,
+  "0.0.0.0",
+  () => {
+    console.log("");
+    console.log("========================================");
+    console.log(
+      `Server listening on port ${PORT}`
+    );
+    console.log("========================================");
+  }
+);
