@@ -1,8 +1,44 @@
 const express = require("express");
 const { chromium } = require("playwright");
+const fs = require("fs");
 
 const app = express();
 const PORT = process.env.PORT || 3000;
+
+// ============================================================
+// Chromium Runtime Check
+// ============================================================
+
+console.log("========================================");
+console.log("=== Chromium runtime check ===");
+console.log("========================================");
+
+console.log("HOME =", process.env.HOME);
+
+console.log(
+  "Playwright cache exists:",
+  fs.existsSync("/root/.cache/ms-playwright")
+);
+
+console.log(
+  "Chromium shell directory exists:",
+  fs.existsSync(
+    "/root/.cache/ms-playwright/chromium_headless_shell-1243"
+  )
+);
+
+console.log(
+  "Chrome executable exists:",
+  fs.existsSync(
+    "/root/.cache/ms-playwright/chromium_headless_shell-1243/chrome-headless-shell-linux64/chrome-headless-shell"
+  )
+);
+
+console.log("========================================");
+
+// ============================================================
+// Test Route
+// ============================================================
 
 app.get("/", async (req, res) => {
   let browser;
@@ -55,6 +91,10 @@ app.get("/", async (req, res) => {
     }
   }
 });
+
+// ============================================================
+// Start Server
+// ============================================================
 
 app.listen(PORT, "0.0.0.0", () => {
   console.log(`Server listening on port ${PORT}`);
