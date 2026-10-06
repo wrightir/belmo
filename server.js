@@ -1,10 +1,20 @@
 const express = require("express");
-const { chromium } = require("playwright");
 const fs = require("fs");
 const { execFileSync } = require("child_process");
 
+// IMPORTANT:
+// Use Playwright's hermetic browser installation location:
+// /app/node_modules/playwright-core/.local-browsers
+process.env.PLAYWRIGHT_BROWSERS_PATH = "0";
+
+const { chromium } = require("playwright");
+
 const app = express();
 const PORT = process.env.PORT || 3000;
+
+// Let Playwright determine the actual installed Chromium path.
+// This avoids hard-coding chromium-1243.
+const chromePath = chromium.executablePath();
 
 console.log("========================================");
 console.log("=== Chromium runtime diagnostic ===");
@@ -12,12 +22,10 @@ console.log("========================================");
 
 console.log("HOME =", process.env.HOME);
 console.log("PORT =", PORT);
-
-const cacheDir = "/root/.cache/ms-playwright";
-
-const chromePath =
-  "/root/.cache/ms-playwright/chromium-1243/" +
-  "chrome-linux64/chrome";
+console.log(
+  "PLAYWRIGHT_BROWSERS_PATH =",
+  process.env.PLAYWRIGHT_BROWSERS_PATH
+);
 
 console.log("");
 console.log("Playwright executablePath:");
@@ -29,18 +37,6 @@ console.log(chromePath);
 
 console.log("");
 console.log("Filesystem checks:");
-
-console.log(
-  "Playwright cache exists:",
-  fs.existsSync(cacheDir)
-);
-
-console.log(
-  "Chrome directory exists:",
-  fs.existsSync(
-    "/root/.cache/ms-playwright/chromium-1243/chrome-linux64"
-  )
-);
 
 console.log(
   "Chrome executable exists:",
@@ -84,10 +80,12 @@ if (fs.existsSync(chromePath)) {
 
     console.log("Direct Chrome execution: SUCCESS");
     console.log("Output length:", output.length);
+
     console.log(
       "Output preview:",
       output.substring(0, 200)
     );
+
   } catch (error) {
     console.error("Direct Chrome execution: FAILED");
     console.error("Error message:", error.message);
@@ -184,7 +182,6 @@ app.get("/", async (req, res) => {
       stack: error.stack,
       executablePath: chromePath,
       filesystem: {
-        cacheExists: fs.existsSync(cacheDir),
         executableExists: fs.existsSync(chromePath)
       }
     });
